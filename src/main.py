@@ -1,11 +1,13 @@
 from pathlib import Path
 
 from pdf_reader import PDFReader
+from image_processor import ImageProcessor
 
 
 def main():
 
     reader = PDFReader()
+    processor = ImageProcessor()
 
     BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -29,8 +31,14 @@ def main():
 
         print(f"[INFO] Total Pages: {len(images)}")
 
-        # Testing only
-        images[0].show()
+        for page_number, image in enumerate(images, start=1):
+
+            processed_image = processor.preprocess(image)
+
+            print(f"[INFO] Processed Page {page_number}")
+
+            # Testing only
+            processed_image.show()
 
         reader.close_pdf(document)
 
