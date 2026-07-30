@@ -1,42 +1,26 @@
 """
+image_processor.py
 
 Purpose:
-    Prepare scanned receipt images for OCR by improving
-    image quality.
-    
+    Prepare receipt images for OCR.
 """
 
-import cv2
 import numpy as np
 from PIL import Image
 
 
 class ImageProcessor:
 
-
     def preprocess(self, image):
+        """
+        Return a clean RGB image for PaddleOCR.
+        """
 
-        # Convert PIL Image to NumPy array
-        image = np.array(image)
+        # Make a copy so we don't modify the original
+        image = image.copy()
 
-        # Convert RGB to BGR because OpenCV uses BGR
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        # Ensure RGB
+        if image.mode != "RGB":
+            image = image.convert("RGB")
 
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-        # Remove small image noise
-        gray = cv2.GaussianBlur(gray, (3, 3), 0)
-
-        # Automatically determine the best threshold
-        processed = cv2.threshold(
-            gray,
-            0,
-            255,
-            cv2.THRESH_BINARY + cv2.THRESH_OTSU
-        )[1]
-
-        # Convert NumPy array back to PIL Image
-        processed = Image.fromarray(processed)
-
-        return processed
+        return image

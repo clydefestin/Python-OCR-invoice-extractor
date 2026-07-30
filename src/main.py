@@ -1,48 +1,102 @@
+"""
+main.py
+
+Purpose:
+    Main entry point of the OCR Invoice Extractor.
+"""
+
+import os
+
+# Disable oneDNN (helps avoid Paddle runtime issues)
+os.environ["FLAGS_use_mkldnn"] = "0"
+os.environ["OMP_NUM_THREADS"] = "1"
+
 from pathlib import Path
 
 from pdf_reader import PDFReader
 from image_processor import ImageProcessor
+from ocr_engine import OCREngine
 
 
 def main():
 
-    reader = PDFReader()
-    processor = ImageProcessor()
-
+    # Project root
     BASE_DIR = Path(__file__).resolve().parent.parent
 
+    # Data folder
     DATA_FOLDER = BASE_DIR / "data"
 
+    # Find PDFs
     pdf_files = sorted(DATA_FOLDER.glob("*.pdf"))
 
     if not pdf_files:
-        print("[ERROR] No PDF files found.")
+        print("[ERROR] No PDF files found in data folder.")
         return
 
-    print(f"[INFO] Found {len(pdf_files)} PDF(s).\n")
+    print("=" * 60)
+    print(f"[INFO] Found {len(pdf_files)} PDF(s).")
+    print("=" * 60)
 
+    # Process every PDF
     for pdf_file in pdf_files:
 
-        print(f"[INFO] Processing: {pdf_file.name}")
+        print()
+        print("=" * 60)
+        print(f"Processing: {pdf_file.name}")
+        print("=" * 60)
 
-        document = reader.load_pdf(pdf_file)
+        # Create fresh objects for every PDF
+        reader = PDFReader()
+        processor = ImageProcessor()
+        ocr = OCREngine()
 
-        images = reader.convert_pages_to_images(document)
+        document = None
 
-        print(f"[INFO] Total Pages: {len(images)}")
+        try:
 
-        for page_number, image in enumerate(images, start=1):
+            # Open PDF
+            document = reader.load_pdf(pdf_file)
 
-            processed_image = processor.preprocess(image)
+            # Convert PDF pages to images
+            images = reader.convert_pages_to_images(document)
 
-            print(f"[INFO] Processed Page {page_number}")
+            if not images:
+                print("[WARNING] No pages were converted.")
+                continue
 
-            # Testing only
-            processed_image.show()
+            # OCR every page
+            for page_number, image in enumerate(images, start=1):
 
-        reader.close_pdf(document)
+                print(f"\n[INFO] Processing Page {page_number}")
 
-        print("-" * 50)
+                processed = processor.preprocess(image)
+
+                text = ocr.extract_text(processed)
+
+                print("\n===== OCR RESULT =====")
+
+                if text.strip():
+                    print(text)
+                else:
+                    print("[WARNING] No text detected.")
+
+                print("======================")
+
+        except Exception as e:
+
+            print(f"[ERROR] Failed to process {pdf_file.name}")
+            print(e)
+
+        finally:
+
+            if document is not None:
+                reader.close_pdf(document)
+
+        print()
+
+    print("=" * 60)
+    print("[INFO] OCR processing completed.")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
