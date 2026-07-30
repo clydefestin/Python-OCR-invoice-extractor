@@ -63,18 +63,24 @@ class ReceiptParser:
     # ---------------------------------------------------------
 
     def extract_receipt(self, text):
-        """
+        r"""
         Finds an OR number in whatever shape the OCR produced
-        (ORNo, OR-No, No:OR-, OR65116, etc.) and normalizes the
-        result to a consistent "OR-XXXXX" format.
+        (ORNoOR65116, NoOR-32408, ORW:OR-70675, NaOR-73197, etc.)
+        and normalizes the result to "OR-XXXXX".
+
+        Note: assumes the number itself is purely digits, which holds
+        for every receipt seen so far. If a future receipt uses an
+        alphanumeric OR number, this won't capture the letters - widen
+        (\d+) back to [A-Z0-9]+ if that turns out to matter.
         """
 
         patterns = [
-            r"OR[-\s]*No\.?[:\s]*([A-Z0-9-]+)",
-            r"ORNo\.?[:\s]*([A-Z0-9-]+)",
-            r"No[:\s]*OR[-\s]*([A-Z0-9-]+)",
-            r"OR[-\s]*([0-9]{4,})",
-            r"OR([0-9]{4,})"
+            r"OR\s*No\.?\s*[:\-]?\s*OR[- ]?(\d+)",
+            r"ORNo\s*OR[- ]?(\d+)",
+            r"ORNo[: ]?(\d+)",
+            r"No[: ]?OR[- ]?(\d+)",
+            r"ORW[: ]?OR[- ]?(\d+)",
+            r"OR[- ]?(\d{4,})"
         ]
 
         for pattern in patterns:
@@ -82,15 +88,7 @@ class ReceiptParser:
             match = re.search(pattern, text, re.I)
 
             if match:
-                value = match.group(1).strip()
-
-                # Normalize: strip any leading "OR" the group may have
-                # captured, then re-attach a single consistent prefix.
-                digits = re.sub(r"[^A-Za-z0-9]", "", value)
-                digits = re.sub(r"^OR", "", digits, flags=re.I)
-
-                if digits:
-                    return "OR-" + digits
+                return f"OR-{match.group(1)}"
 
         return ""
 
@@ -241,17 +239,17 @@ class ReceiptParser:
     def extract_date(self, text):
         """
         Matches "Month Day, Year" even when OCR drops the space
-        between month/day ("June14.2024") or uses a period instead
-        of a comma before the year ("August 25.2024").
+        between month/day ("June14.2024", "August25.2024") or uses a
+        period instead of a comma before the year ("August 25.2024").
         """
 
-        pattern = self.MONTHS + r"\.?\s*(\d{1,2})[.,\s]+(\d{4})"
+        pattern = self.MONTHS + r"\s*(\d{1,2})[\., ]*(\d{4})"
 
         match = re.search(pattern, text, re.I)
 
         if match:
-            month, day, year = match.groups()
-            return f"{month} {day}, {year}"
+            month, day, year = match.group(1), int(match.group(2)), match.group(3)
+            return f"{month} {day:02d}, {year}"
 
         return ""
 
@@ -261,53 +259,28 @@ class ReceiptParser:
 
     def extract_patient(self, text):
         """
-        OCR frequently mangles the word "Patient" itself
-        (e.g. "Patie nt", "Palfent") or the receipt abbreviates it
-        ("PT"). Exact string matching misses these, so instead we
-        fuzzy-match the leading token(s) of each line against
-        "patient".
+        Extract patient name from noisy OCR. Handles known garbling
+        variants directly ("Patie nt", "Palfent", "PT") rather than
+        fuzzy-matching every line, which is simpler and was verified
+        against every real sample seen so far.
+
+        The leading \b is required: without it, "PT" (with no word
+        boundary) can match inside unrelated text like the tail end
+        of "OFFICIALRECEIPT" (...recei-PT), hijacking the match before
+        the regex ever reaches the real "Patient <name>" line.
         """
 
-        lines = text.splitlines()
+        patterns = [
+            r"\b(?:Patient|Patie\s*nt|Palfent|PT)\s+([A-Za-z .]+)",
+            r"\b(?:Patient|PT)\s*:?\s*([A-Za-z .]+)"
+        ]
 
-        for line in lines:
+        for pattern in patterns:
 
-            words = line.split()
+            match = re.search(pattern, text, re.I)
 
-            if not words:
-                continue
-
-            first_cleaned = re.sub(r"[^A-Za-z]", "", words[0]).lower()
-
-            # Case 1: first token is long enough to plausibly be a
-            # complete (if garbled) rendering of "patient" on its own,
-            # e.g. "Patient" or "Palfent" - both 7 letters, same as the
-            # real word. Checked before the split-label case so a
-            # genuine "Patient <Name>" line is never mistaken for a
-            # truncated fragment.
-            if len(first_cleaned) >= 6 and self._looks_like_patient_label(first_cleaned):
-                name = " ".join(words[1:])
-                return self._clean_name(name)
-
-            # Case 2: common abbreviation, e.g. "PT BernardoQ Tolentino"
-            if first_cleaned == "pt":
-                name = " ".join(words[1:])
-                return self._clean_name(name)
-
-            # Case 3: OCR split the label across two tokens, leaving a
-            # short first fragment ("Patie" + "nt" -> "Patient"). Only
-            # tried when the first token was too short to stand alone,
-            # and requires a tight match so it doesn't grab unrelated
-            # short first words followed by a name.
-            if len(words) > 1 and len(first_cleaned) < 6:
-                joined = words[0] + words[1]
-                joined_cleaned = re.sub(r"[^A-Za-z]", "", joined).lower()
-
-                if len(joined_cleaned) <= 9 and self._looks_like_patient_label(
-                    joined_cleaned, min_ratio=0.85
-                ):
-                    name = " ".join(words[2:])
-                    return self._clean_name(name)
+            if match:
+                return self._clean_name(match.group(1))
 
         return ""
 
@@ -328,8 +301,7 @@ class ReceiptParser:
 
     def _clean_name(self, name):
 
-        name = name.split("Date")[0]
-        name = name.split("DESCRIPTION")[0]
+        name = re.split(r"Date|DESCRIPTION|PARTICULARS|TOTAL|PHP", name, flags=re.I)[0]
         name = re.sub(r"[^A-Za-z .]", "", name).strip()
 
         return " ".join(name.split())
